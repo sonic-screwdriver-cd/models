@@ -11,9 +11,9 @@ describe('User Model', () => {
     const token = 'token';
     let UserModel;
     let datastore;
-    let githubMock;
     let hashaMock;
     let ironMock;
+    let scmPlugin;
     let user;
     let BaseModel;
     let createConfig;
@@ -30,9 +30,6 @@ describe('User Model', () => {
             get: sinon.stub(),
             save: sinon.stub()
         };
-        githubMock = {
-            run: sinon.stub()
-        };
         hashaMock = {
             sha1: sinon.stub()
         };
@@ -41,10 +38,12 @@ describe('User Model', () => {
             unseal: sinon.stub(),
             defaults: {}
         };
+        scmPlugin = {
+            getPermissions: sinon.stub()
+        };
 
         mockery.registerMock('screwdriver-hashr', hashaMock);
         mockery.registerMock('iron', ironMock);
-        mockery.registerMock('./github', githubMock);
 
         // eslint-disable-next-line global-require
         UserModel = require('../../lib/user');
@@ -55,6 +54,7 @@ describe('User Model', () => {
         createConfig = {
             datastore,
             id: 'd398fb192747c9a0124e9e5b4e6e8e841cf8c71c',
+            scmPlugin,
             username: 'me',
             token,
             password
@@ -156,19 +156,19 @@ describe('User Model', () => {
         };
 
         beforeEach(() => {
-            githubMock.run.resolves(repo);
+            const sealed = token;
+
+            scmPlugin.getPermissions.resolves(repo.permissions);
+            ironMock.unseal.withArgs(sealed, password, ironMock.defaults)
+                .yieldsAsync(null, 'token');
         });
 
         it('promises to get permissions', () =>
             user.getPermissions(scmUrl)
                 .then((data) => {
-                    assert.calledWith(githubMock.run, {
-                        user,
-                        action: 'get',
-                        params: {
-                            user: 'screwdriver-cd',
-                            repo: 'models'
-                        }
+                    assert.calledWith(scmPlugin.getPermissions, {
+                        scmUrl,
+                        token
                     });
                     assert.deepEqual(data, repo.permissions);
                 })
@@ -177,7 +177,7 @@ describe('User Model', () => {
         it('rejects if fails to get permissions', () => {
             const expectedError = new Error('brokeTheBreaker');
 
-            githubMock.run.rejects(expectedError);
+            scmPlugin.getPermissions.rejects(expectedError);
 
             return user.getPermissions(scmUrl)
                 .then(() => {
