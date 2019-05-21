@@ -121,6 +121,12 @@ describe('Event Factory', () => {
                 url: 'https://internal-ghe.mycompany.com/imbatman',
                 username: 'imbatman'
             },
+            committer: {
+                avatar: 'https://avatars.githubusercontent.com/u/1234567?v=3',
+                name: 'Batman',
+                url: 'https://internal-ghe.mycompany.com/imbatman',
+                username: 'imbatman'
+            },
             message: 'some commit message that is here',
             url: 'https://link.to/commitDiff'
         };
@@ -138,7 +144,8 @@ describe('Event Factory', () => {
                 parentBuildId: 12345,
                 scmContext,
                 prInfo: {
-                    url: 'https://github.com/screwdriver-cd/screwdriver/pull/1063'
+                    url: 'https://github.com/screwdriver-cd/screwdriver/pull/1063',
+                    ref: 'branch'
                 }
             };
             expected = {
@@ -217,6 +224,8 @@ describe('Event Factory', () => {
                 getConfiguration: sinon.stub().resolves(PARSED_YAML),
                 update: sinon.stub().resolves(syncedPipelineMock),
                 jobs: Promise.resolve([]),
+                syncPRs: sinon.stub().resolves(syncedPipelineMock),
+                getJobs: sinon.stub().resolves([]),
                 branch: Promise.resolve('branch')
             };
 
@@ -226,7 +235,8 @@ describe('Event Factory', () => {
             pipelineMock = {
                 sync: sinon.stub().resolves(syncedPipelineMock),
                 update: sinon.stub().resolves(syncedPipelineMock),
-                branch: sinon.stub().resolves('branch')
+                branch: sinon.stub().resolves('branch'),
+                syncPRs: sinon.stub().resolves([])
             };
 
             pipelineFactoryMock.get.withArgs(pipelineId).resolves(pipelineMock);
@@ -312,8 +322,37 @@ describe('Event Factory', () => {
                     state: 'ENABLED'
                 }];
 
-                syncedPipelineMock.jobs = Promise.resolve(jobsMock);
+                syncedPipelineMock.getJobs = sinon.stub().resolves(jobsMock);
                 buildFactoryMock.create.resolves('a build object');
+            });
+
+            it('should call syncPRs when chainPR changed false to true', () => {
+                pipelineFactoryMock.get.withArgs(pipelineId).resolves(pipelineMock);
+                pipelineMock.chainPR = false;
+                syncedPipelineMock.chainPR = true;
+
+                return eventFactory.create(config).then(() => {
+                    assert.calledOnce(syncedPipelineMock.syncPRs);
+                });
+            });
+
+            it('should call syncPRs when chainPR changed undefined to true', () => {
+                pipelineFactoryMock.get.withArgs(pipelineId).resolves(pipelineMock);
+                syncedPipelineMock.chainPR = true;
+
+                return eventFactory.create(config).then(() => {
+                    assert.calledOnce(syncedPipelineMock.syncPRs);
+                });
+            });
+
+            it('should not call syncPRs when chainPR is not change', () => {
+                pipelineFactoryMock.get.withArgs(pipelineId).resolves(pipelineMock);
+                pipelineMock.chainPR = true;
+                syncedPipelineMock.chainPR = true;
+
+                return eventFactory.create(config).then(() => {
+                    assert.notCalled(syncedPipelineMock.syncPRs);
+                });
             });
 
             it('should start existing unarchived pr jobs without creating duplicates', () => {
@@ -369,8 +408,9 @@ describe('Event Factory', () => {
                     state: 'DISABLED'
                 }];
 
-                afterSyncedPRPipelineMock.jobs = Promise.resolve(jobsMock);
+                afterSyncedPRPipelineMock.getJobs.resolves(jobsMock);
                 afterSyncedPRPipelineMock.update = sinon.stub().resolves(afterSyncedPRPipelineMock);
+                syncedPipelineMock.update = sinon.stub().resolves(syncedPipelineMock);
 
                 config.startFrom = '~pr';
                 config.prRef = 'branch';
@@ -387,7 +427,107 @@ describe('Event Factory', () => {
                         eventId: model.id,
                         jobId: 5,
                         prRef: 'branch',
-                        prTitle: 'Update the README with new information'
+                        prTitle: 'Update the README with new information',
+                        meta: {
+                            commit: {
+                                ...commit,
+                                changedFiles: ''
+                            }
+                        }
+                    }));
+                    assert.calledOnce(syncedPipelineMock.syncPR);
+                    assert.calledWith(syncedPipelineMock.syncPR.firstCall, 1);
+                });
+            });
+
+            // eslint-disable-next-line max-len
+            it('should start existing unarchived branch pr jobs without creating duplicates', () => {
+                jobsMock = [{
+                    id: 1,
+                    pipelineId: 8765,
+                    name: 'main',
+                    permutations: [{
+                        requires: ['~pr:branch']
+                    }],
+                    state: 'ENABLED'
+                }, {
+                    id: 5,
+                    pipelineId: 8765,
+                    name: 'PR-1:main',
+                    permutations: [{
+                        requires: ['~pr:branch']
+                    }],
+                    state: 'ENABLED'
+                }, {
+                    id: 6,
+                    pipelineId: 8765,
+                    name: 'PR-1:outdated',
+                    permutations: [{
+                        requires: ['~pr:branch']
+                    }],
+                    state: 'ENABLED',
+                    archived: true
+                },
+                {
+                    id: 7,
+                    pipelineId: 8765,
+                    name: 'PR-2:main',
+                    permutations: [{
+                        requires: ['~pr:branch']
+                    }],
+                    state: 'ENABLED'
+                },
+                {
+                    id: 8,
+                    pipelineId: 8765,
+                    name: 'pr-branch',
+                    permutations: [{
+                        requires: ['~pr:branch']
+                    }],
+                    state: 'ENABLED'
+                },
+                {
+                    id: 9,
+                    pipelineId: 8765,
+                    name: 'PR-1:pr-branch',
+                    permutations: [{
+                        requires: ['~pr:branch']
+                    }],
+                    state: 'DISABLED'
+                }
+                ];
+
+                afterSyncedPRPipelineMock.getJobs.resolves(jobsMock);
+                afterSyncedPRPipelineMock.getConfiguration = sinon.stub().resolves({
+                    jobs: jobsMock,
+                    workflowGraph: syncedPipelineMock.workflowGraph
+                });
+                afterSyncedPRPipelineMock.update = sinon.stub().resolves(afterSyncedPRPipelineMock);
+                syncedPipelineMock.update = sinon.stub().resolves(syncedPipelineMock);
+
+                config.startFrom = '~pr:branch';
+                config.prRef = 'branch-pr';
+                config.prNum = 1;
+                config.prInfo.ref = 'branch-pr';
+                config.prTitle = 'Update the README with new information';
+                config.webhooks = true;
+
+                return eventFactory.create(config).then((model) => {
+                    assert.instanceOf(model, Event);
+                    assert.notCalled(jobFactoryMock.create);
+                    assert.calledOnce(buildFactoryMock.create);
+                    assert.calledWith(buildFactoryMock.create.firstCall, sinon.match({
+                        parentBuildId: 12345,
+                        eventId: model.id,
+                        jobId: 5,
+                        prRef: 'branch-pr',
+                        prTitle: 'Update the README with new information',
+                        meta: {
+                            commit: {
+                                ...commit,
+                                changedFiles: ''
+                            }
+                        }
                     }));
                     assert.calledOnce(syncedPipelineMock.syncPR);
                     assert.calledWith(syncedPipelineMock.syncPR.firstCall, 1);
@@ -412,6 +552,7 @@ describe('Event Factory', () => {
             it('should create commit builds', () => {
                 config.startFrom = '~commit';
                 config.webhooks = true;
+                syncedPipelineMock.id = 123566;
 
                 return eventFactory.create(config).then((model) => {
                     assert.instanceOf(model, Event);
@@ -496,38 +637,6 @@ describe('Event Factory', () => {
                 });
             });
 
-            it('should create ~pr:branch triggered builds', () => {
-                config.startFrom = '~pr:branch';
-                config.prRef = 'branch';
-                config.prNum = 1;
-                config.prTitle = 'Update the README with new information';
-                config.webhooks = true;
-
-                afterSyncedPRPipelineMock.getConfiguration = sinon.stub().resolves({
-                    jobs: jobsMock,
-                    workflowGraph: syncedPipelineMock.workflowGraph
-                });
-
-                return eventFactory.create(config).then((model) => {
-                    assert.instanceOf(model, Event);
-                    assert.calledWith(buildFactoryMock.create, sinon.match({
-                        parentBuildId: 12345,
-                        eventId: model.id,
-                        jobId: 1
-                    }));
-                    assert.calledWith(buildFactoryMock.create, sinon.match({
-                        parentBuildId: 12345,
-                        eventId: model.id,
-                        jobId: 8
-                    }));
-                    assert.calledWith(buildFactoryMock.create, sinon.match({
-                        parentBuildId: 12345,
-                        eventId: model.id,
-                        jobId: 9
-                    }));
-                });
-            });
-
             it('should create build if startFrom is a jobName', () => {
                 config.startFrom = 'main';
 
@@ -569,9 +678,9 @@ describe('Event Factory', () => {
                 }];
 
                 syncedPipelineMock.workflowGraph = releaseWorkflow;
-                syncedPipelineMock.jobs = Promise.resolve(jobsMock);
+                syncedPipelineMock.getJobs = sinon.stub().resolves(jobsMock);
                 syncedPipelineMock.update = sinon.stub().resolves({
-                    jobs: Promise.resolve(jobsMock),
+                    getJobs: sinon.stub().resolves(jobsMock),
                     branch: Promise.resolve('branch')
                 });
                 config.startFrom = '~release';
@@ -614,9 +723,9 @@ describe('Event Factory', () => {
                 }];
 
                 syncedPipelineMock.workflowGraph = tagWorkflow;
-                syncedPipelineMock.jobs = Promise.resolve(jobsMock);
+                syncedPipelineMock.getJobs = sinon.stub().resolves(jobsMock);
                 syncedPipelineMock.update = sinon.stub().resolves({
-                    jobs: Promise.resolve(jobsMock),
+                    getJobs: sinon.stub().resolves(jobsMock),
                     branch: Promise.resolve('branch')
                 });
                 config.startFrom = '~tag';
@@ -670,11 +779,11 @@ describe('Event Factory', () => {
             });
 
             // Private function test
-            it('should keep the workflowGraph as is with non pr event and prChain = true', () => {
+            it('should keep the workflowGraph as is with non pr event and chainPR = true', () => {
                 const RewiredEventFactory = rewire('../../lib/eventFactory');
                 // eslint-disable-next-line no-underscore-dangle
                 const updateWorkflowGraph = RewiredEventFactory.__get__('updateWorkflowGraph');
-                const pipeline = { id: 1234, prChain: true };
+                const pipeline = { id: 1234, chainPR: true };
                 const eventConfig = {}; // non pr event
                 const inWorkflowGraph = {
                     nodes: [
@@ -701,11 +810,11 @@ describe('Event Factory', () => {
                 });
             });
 
-            it('should keep the workflowGraph as is with pr event and prChain = false', () => {
+            it('should keep the workflowGraph as is with pr event and chainPR = false', () => {
                 const RewiredEventFactory = rewire('../../lib/eventFactory');
                 // eslint-disable-next-line no-underscore-dangle
                 const updateWorkflowGraph = RewiredEventFactory.__get__('updateWorkflowGraph');
-                const pipeline = { id: 1234, prChain: false };
+                const pipeline = { id: 1234, chainPR: false };
                 const eventConfig = { prRef: 'branch', prNum: 1 };
                 const inWorkflowGraph = {
                     nodes: [
@@ -732,11 +841,11 @@ describe('Event Factory', () => {
                 });
             });
 
-            it('should update the workflowGraph properly with pr event and prChain = true', () => {
+            it('should update the workflowGraph properly with pr event and chainPR = true', () => {
                 const RewiredEventFactory = rewire('../../lib/eventFactory');
                 // eslint-disable-next-line no-underscore-dangle
                 const updateWorkflowGraph = RewiredEventFactory.__get__('updateWorkflowGraph');
-                const pipeline = { id: 1234, prChain: true };
+                const pipeline = { id: 1234, chainPR: true };
                 const eventConfig = { prRef: 'branch', prNum: 1 };
                 const inWorkflowGraph = {
                     nodes: [
@@ -786,15 +895,88 @@ describe('Event Factory', () => {
                 });
             });
 
-            it('should create build of the "PR-1:main" job with prChain config', () => {
+            // eslint-disable-next-line max-len
+            it('should update the workflowGraph properly when a "startFrom" node is missing in the workflowGraph', () => {
+                const RewiredEventFactory = rewire('../../lib/eventFactory');
+                // eslint-disable-next-line no-underscore-dangle
+                const updateWorkflowGraph = RewiredEventFactory.__get__('updateWorkflowGraph');
+                const eventConfig = { startFrom: '~release' };
+                const inWorkflowGraph = {
+                    nodes: [
+                        { name: '~pr' },
+                        { name: '~commit' },
+                        { name: 'job-A', id: 22 },
+                        { name: 'job-B', id: 23 }
+                    ],
+                    edges: [
+                        { src: '~pr', dest: 'job-A' },
+                        { src: '~commit', dest: 'job-A' },
+                        { src: 'job-A', dest: 'job-B' }
+                    ]
+                };
+                const expectedWorkflowGraph = {
+                    nodes: [
+                        { name: '~pr' },
+                        { name: '~commit' },
+                        { name: 'job-A', id: 22 },
+                        { name: 'job-B', id: 23 },
+                        // add a missing startFrom node
+                        { name: '~release' }
+                    ],
+                    edges: [
+                        { src: '~pr', dest: 'job-A' },
+                        { src: '~commit', dest: 'job-A' },
+                        { src: 'job-A', dest: 'job-B' }
+                    ]
+                };
+
+                return updateWorkflowGraph({
+                    pipelineConfig: {},
+                    eventConfig,
+                    workflowGraph: inWorkflowGraph
+                }).then((actualWorkflowGraph) => {
+                    assert.deepEqual(expectedWorkflowGraph, actualWorkflowGraph);
+                });
+            });
+
+            it('should not push a invalid node in the workflowGraph', () => {
+                const RewiredEventFactory = rewire('../../lib/eventFactory');
+                // eslint-disable-next-line no-underscore-dangle
+                const updateWorkflowGraph = RewiredEventFactory.__get__('updateWorkflowGraph');
+                const eventConfig = { startFrom: 'PR-1:test' };
+                const inWorkflowGraph = {
+                    nodes: [
+                        { name: '~pr' },
+                        { name: '~commit' },
+                        { name: 'job-A', id: 22 },
+                        { name: 'job-B', id: 23 }
+                    ],
+                    edges: [
+                        { src: '~pr', dest: 'job-A' },
+                        { src: '~commit', dest: 'job-A' },
+                        { src: 'job-A', dest: 'job-B' }
+                    ]
+                };
+                const expectedWorkflowGraph = inWorkflowGraph;
+
+                return updateWorkflowGraph({
+                    pipelineConfig: {},
+                    eventConfig,
+                    workflowGraph: inWorkflowGraph
+                }).then((actualWorkflowGraph) => {
+                    assert.deepEqual(expectedWorkflowGraph, actualWorkflowGraph);
+                });
+            });
+
+            it('should create build of the "PR-1:main" job with chainPR config', () => {
                 config.startFrom = '~pr';
                 config.prRef = 'branch';
                 config.prNum = 1;
                 config.prTitle = 'Update the README with new information';
                 config.webhooks = true;
 
-                afterSyncedPRPipelineMock.jobs = Promise.resolve(jobsMock);
-                afterSyncedPRPipelineMock.prChain = true;
+                afterSyncedPRPipelineMock.getJobs = sinon.stub().resolves(jobsMock);
+                afterSyncedPRPipelineMock.chainPR = true;
                 afterSyncedPRPipelineMock.update = sinon.stub().resolves(afterSyncedPRPipelineMock);
                 // This function is called in updateWorkflowGraph() which is tested in another unit test.
                 jobFactoryMock.list.resolves([]);
@@ -849,7 +1031,7 @@ describe('Event Factory', () => {
             config.meta = meta;
             expected.meta = meta;
 
-            eventFactory.create(config).then((model) => {
+            return eventFactory.create(config).then((model) => {
                 assert.instanceOf(model, Event);
                 assert.calledWith(scm.decorateAuthor, {
                     username: 'stjohn',
@@ -866,6 +1048,36 @@ describe('Event Factory', () => {
                 assert.strictEqual(config.prInfo.url, model.pr.url);
                 Object.keys(expected).forEach((key) => {
                     if (key === 'workflowGraph' || key === 'meta') {
+                        assert.deepEqual(model[key], expected[key]);
+                    } else {
+                        assert.strictEqual(model[key], expected[key]);
+                    }
+                });
+            });
+        });
+
+        it('should create an Event with creator', () => {
+            const creatorTest = {
+                name: 'sd:scheduler',
+                username: 'sd-buildbot'
+            };
+
+            config.creator = creatorTest;
+            expected.creator = creatorTest;
+
+            eventFactory.create(config).then((model) => {
+                assert.instanceOf(model, Event);
+                assert.notCalled(scm.decorateAuthor);
+                assert.calledWith(scm.decorateCommit, {
+                    scmUri: 'github.com:1234:branch',
+                    scmContext,
+                    sha: 'ccc49349d3cffbd12ea9e3d41521480b4aa5de5f',
+                    token: 'foo'
+                });
+                assert.strictEqual(syncedPipelineMock.lastEventId, model.id);
+                assert.strictEqual(config.prInfo.url, model.pr.url);
+                Object.keys(expected).forEach((key) => {
+                    if (key === 'workflowGraph' || key === 'meta' || key === 'creator') {
                         assert.deepEqual(model[key], expected[key]);
                     } else {
                         assert.strictEqual(model[key], expected[key]);
@@ -900,6 +1112,33 @@ describe('Event Factory', () => {
             });
         });
 
+        it('should create event with pr info if it is pr event', () => {
+            config.prNum = 20;
+            config.prRef = 'branch';
+
+            return eventFactory.create(config).then((model) => {
+                assert.instanceOf(model, Event);
+                assert.deepEqual(model.pr, config.prInfo);
+                assert.deepEqual(model.prNum, config.prNum);
+            });
+        });
+
+        it('should not call pipeline sync with configPipelineSha if it is pr event', () => {
+            config.parentEventId = 222;
+            config.configPipelineSha = 'configpipelinesha';
+            config.sha = 'configsha';
+            config.prRef = 'branch';
+            config.prNum = 20;
+
+            return eventFactory.create(config).then((model) => {
+                assert.instanceOf(model, Event);
+                assert.neverCalledWith(pipelineMock.sync, config.configPipelineSha);
+                assert.neverCalledWith(pipelineMock.sync, config.sha);
+                assert.deepEqual(model.pr, config.prInfo);
+                assert.deepEqual(model.prNum, config.prNum);
+            });
+        });
+
         it('throw error if sourcepaths is not supported', () => {
             jobsMock = [{
                 id: 1,
@@ -912,7 +1151,7 @@ describe('Event Factory', () => {
                 state: 'ENABLED'
             }];
             syncedPipelineMock.update = sinon.stub().resolves({
-                jobs: Promise.resolve(jobsMock),
+                getJobs: sinon.stub().resolves(jobsMock),
                 branch: Promise.resolve('branch')
             });
 
@@ -940,8 +1179,73 @@ describe('Event Factory', () => {
                 state: 'ENABLED'
             }];
             syncedPipelineMock.update = sinon.stub().resolves({
-                jobs: Promise.resolve(jobsMock),
+                getJobs: sinon.stub().resolves(jobsMock),
                 branch: Promise.resolve('branch')
+            });
+
+            config.startFrom = 'main';
+            config.webhooks = true;
+            config.changedFiles = ['README.md', 'root/src/test/file'];
+
+            return eventFactory.create(config).then((event) => {
+                assert.notCalled(buildFactoryMock.create);
+                assert.equal(event.builds, null);
+            });
+        });
+
+        it('should start build if changed file is in rootDir', () => {
+            jobsMock = [{
+                id: 1,
+                pipelineId: 8765,
+                name: 'main',
+                permutations: [{
+                    requires: ['~pr']
+                }],
+                state: 'ENABLED'
+            }];
+            syncedPipelineMock.update = sinon.stub().resolves({
+                getJobs: sinon.stub().resolves(jobsMock),
+                branch: Promise.resolve('branch'),
+                rootDir: Promise.resolve('root/src/test')
+            });
+
+            config.startFrom = 'main';
+            config.webhooks = true;
+            config.changedFiles = ['README.md', 'root/src/test/file'];
+
+            return eventFactory.create(config).then((model) => {
+                assert.instanceOf(model, Event);
+                assert.calledOnce(buildFactoryMock.create);
+                assert.calledWith(buildFactoryMock.create.firstCall, sinon.match({
+                    meta: {
+                        commit: {
+                            ...commit,
+                            changedFiles: 'README.md,root/src/test/file'
+                        }
+                    }
+                }));
+                assert.deepEqual(
+                    buildFactoryMock.create.args[0][0].environment,
+                    { SD_SOURCE_PATH: 'root/src/test/' }
+                );
+            });
+        });
+
+        it('should start build if changed file is in rootDir and sourcePaths exist', () => {
+            jobsMock = [{
+                id: 1,
+                pipelineId: 8765,
+                name: 'main',
+                permutations: [{
+                    requires: ['~pr'],
+                    sourcePaths: ['screwdriver.yaml', 'test.js']
+                }],
+                state: 'ENABLED'
+            }];
+            syncedPipelineMock.update = sinon.stub().resolves({
+                getJobs: sinon.stub().resolves(jobsMock),
+                branch: Promise.resolve('branch'),
+                rootDir: Promise.resolve('root/src/test')
             });
 
             config.startFrom = 'main';
@@ -967,7 +1271,7 @@ describe('Event Factory', () => {
                 state: 'ENABLED'
             }];
             syncedPipelineMock.update = sinon.stub().resolves({
-                jobs: Promise.resolve(jobsMock),
+                getJobs: sinon.stub().resolves(jobsMock),
                 branch: Promise.resolve('branch')
             });
 
@@ -979,6 +1283,14 @@ describe('Event Factory', () => {
             return eventFactory.create(config).then((model) => {
                 assert.instanceOf(model, Event);
                 assert.calledOnce(buildFactoryMock.create);
+                assert.calledWith(buildFactoryMock.create.firstCall, sinon.match({
+                    meta: {
+                        commit: {
+                            ...commit,
+                            changedFiles: 'README.md,root/src/test/file'
+                        }
+                    }
+                }));
                 assert.deepEqual(
                     buildFactoryMock.create.args[0][0].environment,
                     {}
@@ -1007,7 +1319,7 @@ describe('Event Factory', () => {
                 state: 'ENABLED'
             }];
             afterSyncedPRPipelineMock.update = sinon.stub().resolves({
-                jobs: Promise.resolve(jobsMock),
+                getJobs: sinon.stub().resolves(jobsMock),
                 branch: Promise.resolve('branch')
             });
 
@@ -1044,7 +1356,7 @@ describe('Event Factory', () => {
                 state: 'ENABLED'
             }];
             afterSyncedPRPipelineMock.update = sinon.stub().resolves({
-                jobs: Promise.resolve(jobsMock),
+                getJobs: sinon.stub().resolves(jobsMock),
                 branch: Promise.resolve('branch')
             });
 

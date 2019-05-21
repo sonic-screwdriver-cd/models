@@ -5,6 +5,10 @@ const mockery = require('mockery');
 const sinon = require('sinon');
 const schema = require('screwdriver-data-schema');
 const hoek = require('hoek');
+const rewire = require('rewire');
+const dayjs = require('dayjs');
+const MAX_COUNT = 1000;
+const FAKE_MAX_COUNT = 5;
 
 sinon.assert.expose(assert, { prefix: '' });
 
@@ -37,25 +41,53 @@ describe('Job Model', () => {
         return decorateBuildMock(b);
     };
 
+    const sha = 'ccc49349d3cffbd12ea9e3d41521480b4aa5de5f';
+
+    const stepMetrics = [{
+        id: 1,
+        name: 'sd-setup',
+        code: 0,
+        duration: 5,
+        createTime: '2019-01-22T21:10:00.000Z'
+    }, {
+        id: 2,
+        name: 'test',
+        code: 0,
+        duration: 10,
+        createTime: '2019-01-22T21:11:00.000Z'
+    }, {
+        id: 3,
+        name: 'sd-teardown',
+        code: 0,
+        duration: 2,
+        createTime: '2019-01-22T21:12:00.000Z'
+    }];
     const build1 = getBuildMocks({
         id: 1,
         jobId: 1234,
+        sha,
         status: 'RUNNING',
         createTime: '2019-01-22T21:00:00.000Z',
-        startTime: '2019-01-22T21:08:00.000Z'
+        startTime: '2019-01-22T21:08:00.000Z',
+        getMetrics: sinon.stub().returns(stepMetrics)
     });
     const build2 = getBuildMocks({
         id: 2,
         jobId: 1234,
-        status: 'QUEUED'
+        sha,
+        status: 'QUEUED',
+        getMetrics: sinon.stub().returns([])
+
     });
     const build3 = getBuildMocks({
         id: 3,
         jobId: 1234,
+        sha,
         status: 'SUCCESS',
         createTime: '2019-01-22T21:00:00.000Z',
         startTime: '2019-01-22T21:21:00.000Z',
-        endTime: '2019-01-22T22:30:00.000Z'
+        endTime: '2019-01-22T22:30:00.000Z',
+        getMetrics: sinon.stub().returns(stepMetrics)
     });
     const pipelineMock = {
         secrets: Promise.resolve([
@@ -115,6 +147,7 @@ describe('Job Model', () => {
 
         // eslint-disable-next-line global-require
         JobModel = require('../../lib/job');
+
         // eslint-disable-next-line global-require
         BaseModel = require('../../lib/base');
 
@@ -424,8 +457,7 @@ describe('Job Model', () => {
     describe('get build metrics', () => {
         const startTime = '2019-01-20T12:00:00.000Z';
         const endTime = '2019-01-30T12:00:00.000Z';
-        const duration1 = (new Date(build1.endTime) - new Date(build1.startTime)) / 1000;
-        const duration3 = (new Date(build3.endTime) - new Date(build3.startTime)) / 1000;
+        const duration3 = dayjs(build3.endTime).diff(dayjs(build3.startTime), 'second');
         let metrics;
 
         beforeEach(() => {
@@ -434,22 +466,28 @@ describe('Job Model', () => {
                 eventId: build1.eventId,
                 jobId: build1.jobId,
                 createTime: build1.createTime,
+                sha: build1.sha,
                 status: build1.status,
-                duration: duration1
+                duration: null,
+                steps: stepMetrics
             }, {
                 id: build2.id,
                 eventId: build2.eventId,
                 jobId: build2.jobId,
                 createTime: build2.createTime,
+                sha: build2.sha,
                 status: build2.status,
-                duration: NaN
+                duration: null,
+                steps: []
             }, {
                 id: build3.id,
                 eventId: build3.eventId,
                 jobId: build3.jobId,
                 createTime: build3.createTime,
+                sha: build3.sha,
                 status: build3.status,
-                duration: duration3
+                duration: duration3,
+                steps: stepMetrics
             }];
         });
 
@@ -460,7 +498,12 @@ describe('Job Model', () => {
                 },
                 startTime,
                 endTime,
-                sort: 'descending'
+                sort: 'ascending',
+                sortBy: 'id',
+                paginate: {
+                    count: MAX_COUNT
+                },
+                readOnly: true
             };
 
             buildFactoryMock.list.resolves([build1, build2, build3]);
@@ -468,6 +511,109 @@ describe('Job Model', () => {
             return job.getMetrics({ startTime, endTime }).then((result) => {
                 assert.calledWith(buildFactoryMock.list, buildListConfig);
                 assert.deepEqual(result, metrics);
+            });
+        });
+
+        describe('aggregate metrics', () => {
+            const RewireJobModel = rewire('../../lib/job');
+
+            // eslint-disable-next-line no-underscore-dangle
+            RewireJobModel.__set__('MAX_COUNT', FAKE_MAX_COUNT);
+            let buildListConfig;
+
+            beforeEach(() => {
+                job = new RewireJobModel(config);
+                buildListConfig = {
+                    params: {
+                        jobId: 1234
+                    },
+                    startTime,
+                    endTime,
+                    sort: 'ascending',
+                    sortBy: 'id',
+                    paginate: {
+                        page: 1,
+                        count: FAKE_MAX_COUNT
+                    },
+                    readOnly: true
+                };
+
+                const testBuilds = [];
+                let currentDay = build3.createTime;
+
+                // generate 8 mock builds
+                for (let i = 0; i < 8; i += 1) {
+                    testBuilds.push(Object.assign({}, build3));
+                    testBuilds[i].id = i;
+
+                    if (i % 3 === 0) {
+                        currentDay = dayjs(currentDay).add(2, 'day');
+                    }
+
+                    testBuilds[i].createTime = currentDay.toISOString();
+
+                    // testBuilds' durations are 10, 11, 12, 13 ... 17
+                    testBuilds[i].startTime = dayjs(currentDay).add(10, 'minute').toISOString();
+                    testBuilds[i].endTime = dayjs(currentDay).add(20 + i, 'minute').toISOString();
+                }
+
+                buildFactoryMock.list.onCall(0).resolves(testBuilds.slice(0, 5));
+                buildFactoryMock.list.onCall(1).resolves(testBuilds.slice(5, testBuilds.length));
+            });
+
+            it('generates daily aggregated metrics', () => {
+                metrics = [{
+                    createTime: '2019-01-24T21:00:00.000Z', duration: 660 }, {
+                    createTime: '2019-01-26T21:00:00.000Z', duration: 840 }, {
+                    createTime: '2019-01-28T21:00:00.000Z', duration: 990
+                }];
+
+                return job.getMetrics({ startTime, endTime, aggregateInterval: 'day' })
+                    .then((result) => {
+                        assert.calledTwice(buildFactoryMock.list);
+                        assert.calledWith(buildFactoryMock.list.firstCall, buildListConfig);
+
+                        buildListConfig.paginate.page = 2;
+                        assert.calledWith(buildFactoryMock.list.secondCall, buildListConfig);
+
+                        assert.deepEqual(result, metrics);
+                    });
+            });
+
+            it('generates monthly aggregated metrics', () => {
+                metrics = [{
+                    createTime: '2019-01-24T21:00:00.000Z', duration: 810
+                }];
+
+                return job.getMetrics({ startTime, endTime, aggregateInterval: 'month' })
+                    .then((result) => {
+                        assert.calledTwice(buildFactoryMock.list);
+                        assert.calledWith(buildFactoryMock.list.firstCall, buildListConfig);
+
+                        buildListConfig.paginate.page = 2;
+                        assert.calledWith(buildFactoryMock.list.secondCall, buildListConfig);
+
+                        assert.deepEqual(result, metrics);
+                    });
+            });
+
+            it('filters out bad values', () => {
+                const badBuild = Object.assign({}, build3);
+
+                delete badBuild.endTime;
+
+                buildFactoryMock.list.onCall(0).resolves([build3, badBuild]);
+
+                metrics = [{
+                    createTime: '2019-01-22T21:00:00.000Z', duration: 4140
+                }];
+
+                return job.getMetrics({ startTime, endTime, aggregateInterval: 'month' })
+                    .then((result) => {
+                        assert.calledOnce(buildFactoryMock.list);
+                        assert.calledWith(buildFactoryMock.list.firstCall, buildListConfig);
+                        assert.deepEqual(result, metrics);
+                    });
             });
         });
 
@@ -484,7 +630,12 @@ describe('Job Model', () => {
                 params: {
                     jobId: 1234
                 },
-                sort: 'descending'
+                sort: 'ascending',
+                sortBy: 'id',
+                paginate: {
+                    count: MAX_COUNT
+                },
+                readOnly: true
             };
 
             buildFactoryMock.list.resolves([build1, build2, build3]);
@@ -499,90 +650,6 @@ describe('Job Model', () => {
             buildFactoryMock.list.rejects(new Error('cannotgetit'));
 
             return job.getMetrics({ startTime, endTime })
-                .then(() => {
-                    assert.fail('Should not get here');
-                }).catch((err) => {
-                    assert.instanceOf(err, Error);
-                    assert.equal(err.message, 'cannotgetit');
-                });
-        });
-    });
-
-    describe('get step metrics', () => {
-        const stepName = 'sd-setup-scm';
-        const mockMetrics1 = {
-            id: 1,
-            buildId: 2,
-            name: stepName,
-            code: 0,
-            duration: 20
-        };
-        const mockMetrics2 = Object.assign({}, mockMetrics1, { id: 2, duration: 15 });
-        const mockMetrics3 = Object.assign({}, mockMetrics1, { id: 3, duration: 25 });
-        const startTime = '2019-01-20T12:00:00.000Z';
-        const endTime = '2019-01-30T12:00:00.000Z';
-        let metrics;
-
-        beforeEach(() => {
-            build1.getStepMetrics = sinon.stub().returns([mockMetrics1]);
-            build2.getStepMetrics = sinon.stub().returns([mockMetrics2]);
-            build3.getStepMetrics = sinon.stub().returns([mockMetrics3]);
-
-            metrics = [mockMetrics1, mockMetrics2, mockMetrics3];
-        });
-
-        it('generates metrics', () => {
-            const buildListConfig = {
-                params: {
-                    jobId: 1234
-                },
-                startTime,
-                endTime,
-                sort: 'descending'
-            };
-            const getStepMetricsParams = {
-                stepName
-            };
-
-            buildFactoryMock.list.resolves([build1, build2, build3]);
-
-            return job.getStepMetrics({ startTime, endTime, stepName }).then((result) => {
-                assert.calledWith(buildFactoryMock.list, buildListConfig);
-                assert.calledWith(build1.getStepMetrics, getStepMetricsParams);
-                assert.calledWith(build2.getStepMetrics, getStepMetricsParams);
-                assert.calledWith(build3.getStepMetrics, getStepMetricsParams);
-                assert.deepEqual(result, metrics);
-            });
-        });
-
-        it('does not fail if empty builds', () => {
-            buildFactoryMock.list.resolves([]);
-
-            return job.getStepMetrics({ startTime, endTime, stepName }).then((result) => {
-                assert.deepEqual(result, []);
-            });
-        });
-
-        it('works with no startTime or endTime params passed in', () => {
-            const buildListConfig = {
-                params: {
-                    jobId: 1234
-                },
-                sort: 'descending'
-            };
-
-            buildFactoryMock.list.resolves([build1, build2, build3]);
-
-            return job.getStepMetrics({ stepName }).then((result) => {
-                assert.calledWith(buildFactoryMock.list, buildListConfig);
-                assert.deepEqual(result, metrics);
-            });
-        });
-
-        it('rejects with errors', () => {
-            buildFactoryMock.list.rejects(new Error('cannotgetit'));
-
-            return job.getStepMetrics({ startTime, endTime, stepName })
                 .then(() => {
                     assert.fail('Should not get here');
                 }).catch((err) => {

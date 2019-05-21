@@ -260,7 +260,7 @@ model.update()
 #### Get builds
 Return builds that belong to this job
 ```js
-mode..getBuilds(config)
+model.getBuilds(config)
 ```
 
 | Parameter        | Type  | Required | Default |  Description |
@@ -282,16 +282,6 @@ model.getMetrics()
         // do stuff with metrics
     });
 ```
-
-#### Get Step Metrics
-Get all the durations for a specific step of this job within time range
-```js
-model.getMetrics()
-    .then((metrics) => {
-        // do stuff with metrics
-    });
-```
-
 
 ### Build Factory
 #### Search
@@ -1055,6 +1045,28 @@ factory.list({
     // do things with the records
 );
 ```
+
+#### Get Triggers
+Get triggers based on pipeline ID.
+```js
+factory.getTriggers({ pipelineId, type }).then(result => {
+    console.log(result);
+    // [{
+    //     jobName1,
+    //     triggers: [destA, destB]
+    // }, {
+    //     jobName2,
+    //     triggers: [destC, destD]
+    // }]
+});
+```
+
+| Parameter        | Type  |  Description |
+| :-------------   | :---- | :-------------|
+| config           | Object | Config object |
+| config.pipelineId | Number | The unique ID for the pipeline |
+| config.type | String | Type of jobs to get (`pr` or `pipeline`; default `pipeline`) |
+
 ### Token Factory
 #### Search
 ```js

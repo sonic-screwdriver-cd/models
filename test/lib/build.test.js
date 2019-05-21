@@ -976,7 +976,7 @@ describe('Build Model', () => {
                 scmContext,
                 admin: Promise.resolve(adminUser),
                 token: Promise.resolve('foo'),
-                jobs: Promise.resolve([
+                getJobs: sinon.stub().resolves([
                     { id: jobId, name: 'main', isPR: () => false },
                     blocking1,
                     { id: 123, name: 'somejob', isPR: () => false },
@@ -1036,14 +1036,14 @@ describe('Build Model', () => {
             };
             const pipeline1 = {
                 id: externalPid1,
-                jobs: Promise.resolve([
+                getJobs: sinon.stub().resolves([
                     { id: 999, name: 'somejob', isPR: () => false },
                     externalJob1
                 ])
             };
             const pipeline2 = {
                 id: externalPid2,
-                jobs: Promise.resolve([
+                getJobs: sinon.stub().resolves([
                     { id: 888, name: 'somerandomjob', isPR: () => false },
                     externalJob2
                 ])
@@ -1063,7 +1063,7 @@ describe('Build Model', () => {
                 scmContext,
                 admin: Promise.resolve(adminUser),
                 token: Promise.resolve('foo'),
-                jobs: Promise.resolve([
+                getJobs: sinon.stub().resolves([
                     { id: jobId, name: 'main', isPR: () => false },
                     { id: 123, name: 'somejob', isPR: () => false },
                     { id: internalJob.id, name: internalJob.name, isPR: () => false }])
@@ -1093,6 +1093,82 @@ describe('Build Model', () => {
                         jobName,
                         eventId,
                         blockedBy: [jobId, internalJob.id, externalJob1.id, externalJob2.id],
+                        annotations,
+                        freezeWindows,
+                        apiUri,
+                        buildId,
+                        container,
+                        token,
+                        tokenGen,
+                        pipeline: {
+                            id: pipelineMockB.id,
+                            scmContext: pipelineMockB.scmContext
+                        }
+                    });
+                });
+        });
+
+        it('gets external blockedby job Ids and pass to executor start ' +
+            'even if pipeline does not exist', () => {
+            const externalPid1 = 101;
+            const externalPid2 = 202;
+            const externalJob1 = {
+                name: 'externalJob1',
+                id: 111,
+                isPR: () => false
+            };
+            const pipeline1 = {
+                id: externalPid1,
+                getJobs: sinon.stub().resolves([
+                    { id: 999, name: 'somejob', isPR: () => false },
+                    externalJob1
+                ])
+            };
+            const internalJob = {
+                name: 'internalJob',
+                id: 333,
+                isPR: () => false
+            };
+
+            pipelineFactoryMock.get.withArgs(externalPid1).resolves(pipeline1);
+            pipelineFactoryMock.get.withArgs(externalPid2).resolves(null);
+
+            pipelineMockB = {
+                id: pipelineId,
+                scmUri,
+                scmContext,
+                admin: Promise.resolve(adminUser),
+                token: Promise.resolve('foo'),
+                getJobs: sinon.stub().resolves([
+                    { id: jobId, name: 'main', isPR: () => false },
+                    { id: 123, name: 'somejob', isPR: () => false },
+                    { id: internalJob.id, name: internalJob.name, isPR: () => false }])
+            };
+
+            jobFactoryMock.get.resolves({
+                id: jobId,
+                name: 'main',
+                pipeline: Promise.resolve(pipelineMockB),
+                permutations: [{
+                    annotations,
+                    freezeWindows,
+                    blockedBy: [
+                        `~sd@${externalPid1}:externalJob1`,
+                        `~${internalJob.name}`,
+                        `~sd@${externalPid2}:externalJob2`
+                    ]
+                }],
+                isPR: () => false
+            });
+
+            return build.start()
+                .then(() => {
+                    assert.calledWith(executorMock.start, {
+                        build,
+                        jobId,
+                        jobName,
+                        eventId,
+                        blockedBy: [jobId, internalJob.id, externalJob1.id],
                         annotations,
                         freezeWindows,
                         apiUri,
@@ -1328,21 +1404,18 @@ describe('Build Model', () => {
         beforeEach(() => {
             metrics = [{
                 id: step1.id,
-                buildId,
                 name: step1.name,
                 code: step1.code,
                 duration: duration1,
                 createTime: build.createTime
             }, {
                 id: step2.id,
-                buildId,
                 name: step2.name,
                 code: step2.code,
                 duration: duration2,
                 createTime: build.createTime
             }, {
                 id: undefined,
-                buildId,
                 name: step3.name,
                 code: step3.code,
                 duration: duration3,
