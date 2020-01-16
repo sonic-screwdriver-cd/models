@@ -108,7 +108,8 @@ describe('Build Factory', () => {
             get: sinon.stub()
         };
         stepFactoryMock = {
-            create: sinon.stub().resolves({})
+            create: sinon.stub().resolves({}),
+            list: sinon.stub()
         };
         buildClusterFactoryMock = {
             list: sinon.stub().resolves([]),
@@ -847,13 +848,197 @@ describe('Build Factory', () => {
         });
     });
 
+    describe('get', () => {
+        it('should get build', () => {
+            const buildData = {
+                id: 1,
+                createTime: '2038-01-19T03:15:08.532Z',
+                endTime: '2038-02-19T03:15:08.532Z'
+            };
+            const stepsMock = [
+                {
+                    name: 'publish',
+                    code: 1,
+                    startTime: '2039-01-19T03:15:08.532Z',
+                    endTime: '2039-01-19T03:15:09.114Z'
+                },
+                {
+                    name: 'install',
+                    code: 1,
+                    startTime: '2038-01-19T03:15:08.532Z',
+                    endTime: '2038-01-19T03:15:09.114Z'
+                }
+            ];
+            const expectedBuild = {
+                id: 1,
+                steps: [
+                    {
+                        name: 'install',
+                        code: 1,
+                        startTime: '2038-01-19T03:15:08.532Z',
+                        endTime: '2038-01-19T03:15:09.114Z'
+                    },
+                    {
+                        name: 'publish',
+                        code: 1,
+                        startTime: '2039-01-19T03:15:08.532Z',
+                        endTime: '2039-01-19T03:15:09.114Z'
+                    }
+                ]
+            };
+
+            datastore.get.resolves(buildData);
+            stepFactoryMock.list.resolves(stepsMock);
+
+            return factory.get({ id: 1 })
+                .then((build) => {
+                    console.log('==============================================================');
+                    console.log(build);
+                    //console.log(expectedBuild);
+                    console.log('==============================================================');
+                    assert.strictEqual(build, expectedBuild);
+                    assert.calledWithMatch(datastore.get, {});
+                })
+        });
+
+        it('properly handles rejection due to missing steps model', () => {
+            datastore.get.resolves({});
+            stepFactoryMock.list.resolves(null);
+
+            return factory.get({}).catch((err) => {
+                assert.instanceOf(err, Error);
+                assert.strictEqual(err.message, 'Steps do not exist');
+            });
+        });
+    });
+
     describe('list', () => {
-        it('should list builds without step models', () => {
-            datastore.scan.resolves([]);
+        beforeEach(() => {
+            const buildData1 = {
+                id: 1,
+                createTime: '2039-01-19T03:15:08.532Z',
+                endTime: '2039-02-19T03:15:08.532Z'
+            };
+            const buildData2 = {
+                id: 2,
+                createTime: '2038-01-19T03:15:08.532Z',
+                endTime: '2038-02-19T03:15:08.532Z'
+            };
+            const buildsData = [
+                buildData1,
+                buildData2
+            ];
+            const stepsMock = [
+                {
+                    name: 'publish',
+                    code: 1,
+                    startTime: '2039-01-19T03:15:08.532Z',
+                    endTime: '2039-01-19T03:15:09.114Z'
+                },
+                {
+                    name: 'install',
+                    code: 1,
+                    startTime: '2038-01-19T03:15:08.532Z',
+                    endTime: '2038-01-19T03:15:09.114Z'
+                }
+            ];
+            stepFactoryMock.list.resolves(stepsMock);
+            datastore.scan.resolves(buildsData);
+        });
+
+        it('should list builds in ascending order of createTime', () => {
+            const expectedBuilds = [
+                {
+                    id: 2,
+                    createTime: '2038-01-19T03:15:08.532Z',
+                    endTime: '2038-02-19T03:15:08.532Z',
+                    steps: [
+                        {
+                            name: 'install',
+                            code: 1,
+                            startTime: '2038-01-19T03:15:08.532Z',
+                            endTime: '2038-01-19T03:15:09.114Z'
+                        },
+                        {
+                            name: 'publish',
+                            code: 1,
+                            startTime: '2039-01-19T03:15:08.532Z',
+                            endTime: '2039-01-19T03:15:09.114Z'
+                        }
+                    ]
+                },
+                {
+                    id: 1,
+                    createTime: '2039-01-19T03:15:08.532Z',
+                    endTime: '2039-02-19T03:15:08.532Z',
+                    steps: [
+                        {
+                            name: 'install',
+                            code: 1,
+                            startTime: '2038-01-19T03:15:08.532Z',
+                            endTime: '2038-01-19T03:15:09.114Z'
+                        },
+                        {
+                            name: 'publish',
+                            code: 1,
+                            startTime: '2039-01-19T03:15:08.532Z',
+                            endTime: '2039-01-19T03:15:09.114Z'
+                        }
+                    ]
+                }
+            ];
 
             return factory.list({})
-                .then(() => {
+                .then((builds) => {
+                    assert.deepStrictEqual(builds, expectedBuilds);
                     assert.calledWithMatch(datastore.scan, { sortBy: 'createTime' });
+                });
+        });
+
+        it('should list builds in ascending order of id', () => {
+            const expectedBuilds = [
+                {
+                    id: 1,
+                    createTime: '2039-01-19T03:15:08.532Z',
+                    steps: [
+                        {
+                            name: 'install',
+                            code: 1,
+                            startTime: '2038-01-19T03:15:08.532Z',
+                            endTime: '2038-01-19T03:15:09.114Z'
+                        },
+                        {
+                            name: 'publish',
+                            code: 1,
+                            startTime: '2039-01-19T03:15:08.532Z',
+                            endTime: '2039-01-19T03:15:09.114Z'
+                        }
+                    ]
+                },
+                {
+                    id: 2,
+                    createTime: '2038-01-19T03:15:08.532Z',
+                    steps: [
+                        {
+                            name: 'install',
+                            code: 1,
+                            startTime: '2038-01-19T03:15:08.532Z',
+                            endTime: '2038-01-19T03:15:09.114Z'
+                        },
+                        {
+                            name: 'publish',
+                            code: 1,
+                            startTime: '2039-01-19T03:15:08.532Z',
+                            endTime: '2039-01-19T03:15:09.114Z'
+                        }
+                    ]
+                }
+            ];
+
+            return factory.list({ sortBy: 'id' })
+                .then((builds) => {
+                    assert.deepStrictEqual(builds, expectedBuilds);
+                    assert.calledWithMatch(datastore.scan, { sortBy: 'id' });
                 });
         });
     });
